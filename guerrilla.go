@@ -26,7 +26,7 @@ func New(ac *AppConfig, b *Backend) Guerrilla {
 			continue
 		}
 		// Add relevant app-wide config options to each server
-		sc.AllowedHosts = ac.AllowedHosts
+		// sc.AllowedHosts = ac.AllowedHosts
 		server, err := newServer(sc, b)
 		if err != nil {
 			log.WithError(err).Error("Failed to create server")
