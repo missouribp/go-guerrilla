@@ -32,7 +32,21 @@ const (
 )
 
 // Server listens for SMTP clients on the port specified in its config
-type server struct {
+
+type Server interface{
+	NewServer(sc ServerConfig, b *Backend) Server
+	Start(startWG *sync.WaitGroup) error
+	Shutdown()
+	GetActiveClientsCount() int
+	allowsHost(host string) bool
+	upgradeToTLS(client *client) bool
+	closeConn(client *client)
+	read(client *client) (string, error)
+	writeResponse(client *client) error
+	isShuttingDown() bool
+	handleClient(client *client)
+}
+type BaseServer struct {
 	config         *ServerConfig
 	backend        Backend
 	tlsConfig      *tls.Config
@@ -45,8 +59,8 @@ type server struct {
 }
 
 // Creates and returns a new ready-to-run Server from a configuration
-func newServer(sc ServerConfig, b *Backend) (*server, error) {
-	server := &server{
+func NewBaseServer(sc ServerConfig, b *Backend) (*BaseServer, error) {
+	server := &BaseServer{
 		config:         &sc,
 		backend:        *b,
 		maxSize:        sc.MaxSize,
@@ -70,7 +84,7 @@ func newServer(sc ServerConfig, b *Backend) (*server, error) {
 }
 
 // Begin accepting SMTP clients
-func (server *server) Start(startWG *sync.WaitGroup) error {
+func (server *BaseServer) Start(startWG *sync.WaitGroup) error {
 	var clientID uint64
 	clientID = 0
 
@@ -117,7 +131,7 @@ func (server *server) Start(startWG *sync.WaitGroup) error {
 	}
 }
 
-func (server *server) Shutdown() {
+func (server *BaseServer) Shutdown() {
 	server.clientPool.ShutdownState()
 	if server.listener != nil {
 		server.listener.Close()
@@ -130,12 +144,12 @@ func (server *server) Shutdown() {
 	}
 }
 
-func (server *server) GetActiveClientsCount() int {
+func (server *BaseServer) GetActiveClientsCount() int {
 	return server.clientPool.GetActiveClientsCount()
 }
 
 // Verifies that the host is a valid recipient.
-func (server *server) allowsHost(host string) bool {
+func (server *BaseServer) allowsHost(host string) bool {
 	for _, allowed := range server.config.AllowedHosts {
 		if host == allowed {
 			return true
@@ -145,7 +159,7 @@ func (server *server) allowsHost(host string) bool {
 }
 
 // Upgrades a client connection to TLS
-func (server *server) upgradeToTLS(client *client) bool {
+func (server *BaseServer) upgradeToTLS(client *client) bool {
 	tlsConn := tls.Server(client.conn, server.tlsConfig)
 	err := tlsConn.Handshake()
 	if err != nil {
@@ -161,14 +175,14 @@ func (server *server) upgradeToTLS(client *client) bool {
 }
 
 // Closes a client connection
-func (server *server) closeConn(client *client) {
+func (server *BaseServer) closeConn(client *client) {
 	client.conn.Close()
 	client.conn = nil
 }
 
 // Reads from the client until a terminating sequence is encountered,
 // or until a timeout occurs.
-func (server *server) read(client *client) (string, error) {
+func (server *BaseServer) read(client *client) (string, error) {
 	var input, reply string
 	var err error
 
@@ -203,7 +217,7 @@ func (server *server) read(client *client) (string, error) {
 }
 
 // Writes a response to the client.
-func (server *server) writeResponse(client *client) error {
+func (server *BaseServer) writeResponse(client *client) error {
 	client.setTimeout(server.timeout)
 	size, err := client.bufout.WriteString(client.response)
 	if err != nil {
@@ -217,12 +231,12 @@ func (server *server) writeResponse(client *client) error {
 	return nil
 }
 
-func (server *server) isShuttingDown() bool {
+func (server *BaseServer) isShuttingDown() bool {
 	return server.clientPool.IsShuttingDown()
 }
 
 // Handles an entire client SMTP exchange
-func (server *server) handleClient(client *client) {
+func (server *BaseServer) handleClient(client *client) {
 	defer server.closeConn(client)
 
 	log.Infof("Handle client [%s], id: %d", client.RemoteAddress, client.ID)
